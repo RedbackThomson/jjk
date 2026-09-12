@@ -4,10 +4,17 @@ import type { JJCli } from "./services/JJCli";
 import type { ExtensionResources } from "./services/ExtensionResources";
 import type { Vscode } from "./services/Vscode";
 import { getActiveTextEditor, getConfigurationValue } from "./services/Vscode";
-import { annotate, getShow } from "./services/Repository";
+import {
+  annotate,
+  getOriginalPath,
+  getShow,
+  jjEdit,
+} from "./services/Repository";
 import type { RepoHandle } from "./repoHandle";
 import { getParams } from "./uri";
-import type { ChangeWithDetails } from "./types";
+import type { Show } from "./types";
+import type { RepoCommandEffect } from "./commandHandlerShared";
+import { formatChangeStats, getChangeStats } from "./changeStats";
 
 import type { JjWatchmanRegisterSnapshotTriggerRef } from "./services/JjWatchmanSnapshotTriggerRef";
 
@@ -25,7 +32,155 @@ interface AnnotationState {
 
 interface AnnotationInfo {
   readonly uri: vscode.Uri;
-  readonly changeIdsByLine: readonly string[];
+  readonly commitIdsByLine: readonly string[];
+}
+
+const COPY_CHANGE_ID_COMMAND = "jj.copyChangeId";
+const COPY_COMMIT_ID_COMMAND = "jj.copyCommitId";
+const EDIT_ANNOTATED_CHANGE_COMMAND = "jj.editAnnotatedChange";
+const VIEW_CHANGE_COMMAND = "jj.viewChange";
+const OPEN_CHANGE_FILE_DIFF_COMMAND = "jj.openChangeFileDiff";
+
+interface AnnotationHoverContext {
+  readonly filePath: string;
+  readonly line: number;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function appendTooltipText(
+  hover: vscode.MarkdownString,
+  text: string,
+  tooltip: string,
+  bold = false,
+) {
+  const escapedText = escapeHtml(text);
+  const content = bold ? `<strong>${escapedText}</strong>` : escapedText;
+  hover.appendMarkdown(
+    `<span title="${escapeHtml(tooltip)}">${content}</span>`,
+  );
+}
+
+function formatSegmentedId(
+  displayId: string,
+  uniquePrefix: string,
+): string {
+  const prefixLength = displayId.startsWith(uniquePrefix)
+    ? uniquePrefix.length
+    : displayId.length;
+  return `**${displayId.slice(0, prefixLength)}**${displayId.slice(prefixLength)}`;
+}
+
+export function buildAnnotationHover(
+  show: Show,
+  repositoryRoot: string,
+  context?: AnnotationHoverContext,
+): vscode.MarkdownString {
+  const change = show.change;
+  const hover = new vscode.MarkdownString();
+  hover.isTrusted = {
+    enabledCommands: [
+      COPY_CHANGE_ID_COMMAND,
+      COPY_COMMIT_ID_COMMAND,
+      EDIT_ANNOTATED_CHANGE_COMMAND,
+      VIEW_CHANGE_COMMAND,
+      OPEN_CHANGE_FILE_DIFF_COMMAND,
+    ],
+  };
+  hover.supportThemeIcons = true;
+  hover.supportHtml = true;
+
+  const authorName =
+    change.author.name || change.author.email || "Unknown author";
+  hover.appendMarkdown("$(account) ");
+  if (change.author.email) {
+    appendTooltipText(hover, authorName, change.author.email, true);
+  } else {
+    hover.appendMarkdown("**");
+    hover.appendText(authorName);
+    hover.appendMarkdown("**");
+  }
+  if (change.relativeAuthoredDate) {
+    hover.appendMarkdown(" · ");
+    appendTooltipText(
+      hover,
+      change.relativeAuthoredDate,
+      change.authoredDate,
+    );
+  } else if (change.authoredDate) {
+    hover.appendMarkdown(" · ");
+    hover.appendText(change.authoredDate);
+  }
+  hover.appendMarkdown("\n\n---\n\n");
+
+  const description = change.description || "(no description)";
+  const [subject, ...bodyLines] = description.split("\n");
+  hover.appendMarkdown("### ");
+  hover.appendText(subject);
+  const body = bodyLines.join("\n").trim();
+  if (body) {
+    hover.appendMarkdown("\n\n");
+    hover.appendText(body);
+  }
+  hover.appendMarkdown("\n\n");
+
+  if (change.parentChangeIds.length > 0) {
+    hover.appendMarkdown(
+      `$(git-merge) ${change.parentChangeIds.length} parent${change.parentChangeIds.length === 1 ? "" : "s"} &nbsp;·&nbsp; `,
+    );
+  }
+  hover.appendMarkdown("$(files) ");
+  hover.appendText(formatChangeStats(getChangeStats(show.fileStatuses)));
+  hover.appendMarkdown("\n\n---\n\n");
+
+  const copyChangeCommandArgs = encodeURIComponent(
+    JSON.stringify([change.shortChangeId]),
+  );
+  const copyCommitCommandArgs = encodeURIComponent(
+    JSON.stringify([change.shortCommitId]),
+  );
+  // Commands take the commit ID: a divergent change ID is ambiguous as a revset.
+  const editCommandArgs = encodeURIComponent(
+    JSON.stringify([repositoryRoot, change.commitId]),
+  );
+  const viewChangeCommandArgs = encodeURIComponent(
+    JSON.stringify([repositoryRoot, change.commitId]),
+  );
+  const formattedChangeId = formatSegmentedId(
+    change.shortChangeId,
+    change.uniqueChangeIdPrefix,
+  );
+  const formattedCommitId = formatSegmentedId(
+    change.shortCommitId,
+    change.uniqueCommitIdPrefix,
+  );
+  hover.appendMarkdown(
+    `[$(copy)&nbsp;${formattedChangeId}](command:${COPY_CHANGE_ID_COMMAND}?${copyChangeCommandArgs} "Copy change ID") &nbsp; ` +
+      `[$(clippy)&nbsp;${formattedCommitId}](command:${COPY_COMMIT_ID_COMMAND}?${copyCommitCommandArgs} "Copy commit ID") &nbsp; ` +
+      `[$(edit)](command:${EDIT_ANNOTATED_CHANGE_COMMAND}?${editCommandArgs} "Edit this change") &nbsp; ` +
+      `[$(files)](command:${VIEW_CHANGE_COMMAND}?${viewChangeCommandArgs} "View all files in this change")`,
+  );
+  if (context) {
+    const openChangesCommandArgs = encodeURIComponent(
+      JSON.stringify([
+        change.commitId,
+        context.filePath,
+        context.line,
+        change.shortChangeId,
+      ]),
+    );
+    hover.appendMarkdown(
+      ` &nbsp; [$(compare-changes)](command:${OPEN_CHANGE_FILE_DIFF_COMMAND}?${openChangesCommandArgs} "Open changes for this file")`,
+    );
+  }
+  return hover;
 }
 
 export interface AnnotationDeps {
@@ -44,9 +199,79 @@ export interface AnnotationDeps {
     repo: RepoHandle,
     effect: Effect.Effect<A, E, RepoEffectEnv>,
   ) => Effect.Effect<A, Error>;
+  readonly runRepoCommand: (
+    repo: RepoHandle,
+    effect: RepoCommandEffect,
+    errorLabel: string,
+  ) => Promise<void>;
+  readonly retryImmutable: <A>(
+    effect: RepoCommandEffect<A>,
+    confirmPrompt: string,
+    retryEffect: RepoCommandEffect<A>,
+  ) => RepoCommandEffect<A | undefined>;
 }
 
 export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
+  await deps.registerScoped(() =>
+    vscode.commands.registerCommand(
+      COPY_CHANGE_ID_COMMAND,
+      async (changeId: unknown) => {
+        if (typeof changeId !== "string" || changeId.length === 0) {
+          return;
+        }
+        await vscode.env.clipboard.writeText(changeId);
+        vscode.window.setStatusBarMessage(
+          `Copied Jujutsu change ID ${changeId}`,
+          2_000,
+        );
+      },
+    ),
+  );
+  await deps.registerScoped(() =>
+    vscode.commands.registerCommand(
+      COPY_COMMIT_ID_COMMAND,
+      async (commitId: unknown) => {
+        if (typeof commitId !== "string" || commitId.length === 0) {
+          return;
+        }
+        await vscode.env.clipboard.writeText(commitId);
+        vscode.window.setStatusBarMessage(
+          `Copied Git commit ID ${commitId}`,
+          2_000,
+        );
+      },
+    ),
+  );
+  await deps.registerScoped(() =>
+    vscode.commands.registerCommand(
+      EDIT_ANNOTATED_CHANGE_COMMAND,
+      async (repositoryRoot: unknown, rev: unknown) => {
+        if (
+          typeof repositoryRoot !== "string" ||
+          typeof rev !== "string" ||
+          rev.length === 0
+        ) {
+          return;
+        }
+        const repo = deps.findRepoByUri(vscode.Uri.file(repositoryRoot));
+        if (!repo) {
+          void vscode.window.showErrorMessage(
+            "Could not find the Jujutsu repository for this annotation.",
+          );
+          return;
+        }
+        await deps.runRepoCommand(
+          repo,
+          deps.retryImmutable(
+            jjEdit(repo.config, rev),
+            "The change is immutable. Edit anyway?",
+            jjEdit(repo.config, rev, true),
+          ),
+          "Failed to edit annotated change",
+        );
+      },
+    ),
+  );
   const annotationDecoration = await deps.registerScoped(() =>
     vscode.window.createTextEditorDecorationType({
       after: {
@@ -90,6 +315,12 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
       "enableAnnotations",
       vscode.Uri.file(repo.config.repositoryRoot),
     );
+  const getAnnotationHoverEnabled = (repo: RepoHandle) =>
+    getConfigurationValue<boolean>(
+      "jjk",
+      "enableAnnotationHover",
+      vscode.Uri.file(repo.config.repositoryRoot),
+    );
 
   const updateAnnotateInfoEffect = (
     uri: vscode.Uri,
@@ -122,8 +353,21 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
       }
 
       const rev = getAnnotationRev(uri);
-      const changeIdsByLine = yield* deps
-        .runRepoEffect(repo, annotate(repo.config, uri.fsPath, rev))
+      const params = uri.scheme === "jj" ? getParams(uri) : undefined;
+      const annotateEffect =
+        params && "diffOriginalRev" in params
+          ? getOriginalPath(
+              repo.config,
+              params.diffOriginalRev,
+              uri.fsPath,
+            ).pipe(
+              Effect.flatMap((originalPath) =>
+                annotate(repo.config, originalPath, rev),
+              ),
+            )
+          : annotate(repo.config, uri.fsPath, rev);
+      const commitIdsByLine = yield* deps
+        .runRepoEffect(repo, annotateEffect)
         .pipe(
           Effect.catchIf(
             (error) => error.message.includes("more than one revision"),
@@ -134,8 +378,8 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
       yield* Ref.update(annotationState, (state) => ({
         ...state,
         annotateInfo:
-          uriEquals(state.activeEditorUri, uri) && changeIdsByLine.length > 0
-            ? { uri, changeIdsByLine }
+          uriEquals(state.activeEditorUri, uri) && commitIdsByLine.length > 0
+            ? { uri, commitIdsByLine }
             : undefined,
       }));
     });
@@ -155,6 +399,7 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
         yield* clearAnnotations(editor);
         return;
       }
+      const annotationHoverEnabled = yield* getAnnotationHoverEnabled(repo);
 
       const state = yield* Ref.get(annotationState);
       if (
@@ -168,32 +413,25 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
 
       const annotateInfo = state.annotateInfo;
       const safeLines = lines.filter(
-        (line) => line !== annotateInfo.changeIdsByLine.length,
+        (line) => line !== annotateInfo.commitIdsByLine.length,
       );
+      const uniqueCommitIds = [
+        ...new Set(
+          safeLines
+            .map((line) => annotateInfo.commitIdsByLine[line])
+            .filter((commitId): commitId is string => Boolean(commitId)),
+        ),
+      ];
       const changes = new Map(
         yield* Effect.forEach(
-          safeLines,
-          (line) => {
-            const changeId = annotateInfo.changeIdsByLine[line];
-            if (!changeId) {
-              return Effect.succeed(undefined);
-            }
-            return deps
-              .runRepoEffect(repo, getShow(repo.config, changeId))
+          uniqueCommitIds,
+          (commitId) =>
+            deps
+              .runRepoEffect(repo, getShow(repo.config, commitId))
               .pipe(
-                Effect.map(
-                  (showResult) => [changeId, showResult.change] as const,
-                ),
-              );
-          },
+                Effect.map((showResult) => [commitId, showResult] as const),
+              ),
           { concurrency: "unbounded" },
-        ).pipe(
-          Effect.map((entries) =>
-            entries.filter(
-              (entry): entry is readonly [string, ChangeWithDetails] =>
-                entry !== undefined,
-            ),
-          ),
         ),
       );
 
@@ -209,22 +447,29 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
 
       const decorations: vscode.DecorationOptions[] = [];
       for (const line of safeLines) {
-        const changeId = nextState.annotateInfo.changeIdsByLine[line];
-        if (!changeId) {
+        const commitId = nextState.annotateInfo.commitIdsByLine[line];
+        if (!commitId) {
           continue;
         }
 
-        const change = changes.get(changeId);
-        if (!change) {
+        const show = changes.get(commitId);
+        if (!show) {
           continue;
         }
+        const change = show.change;
 
         decorations.push({
+          hoverMessage: annotationHoverEnabled
+            ? buildAnnotationHover(show, repo.config.repositoryRoot, {
+                filePath: editor.document.uri.fsPath,
+                line,
+              })
+            : undefined,
           renderOptions: {
             after: {
               backgroundColor: "#00000000",
               color: "#99999959",
-              contentText: ` ${change.author.name} at ${change.authoredDate} • ${change.description || "(no description)"} • ${change.changeId.substring(0, 8)} `,
+              contentText: ` ${change.author.name} at ${change.authoredDate} • ${change.description || "(no description)"} • ${change.shortChangeId} `,
               textDecoration: "none;",
             },
           },
@@ -306,6 +551,26 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
           yield* setDecorationsEffect(editor, state.activeLines);
         }),
         "Failed to refresh annotations after document change",
+      );
+    }),
+  );
+  await deps.registerScoped(() =>
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        !event.affectsConfiguration("jjk.enableAnnotations") &&
+        !event.affectsConfiguration("jjk.enableAnnotationHover")
+      ) {
+        return;
+      }
+      deps.dispatchExtensionEffect(
+        getActiveTextEditor().pipe(
+          Effect.flatMap((editor) =>
+            editor
+              ? handleDidChangeActiveTextEditorEffect(editor)
+              : Effect.void,
+          ),
+        ),
+        "Failed to update annotations after configuration change",
       );
     }),
   );

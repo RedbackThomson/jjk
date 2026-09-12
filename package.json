@@ -4,7 +4,7 @@
   "publisher": "jjk",
   "description": "Jujutsu (jj) version control system for VS Code",
   "icon": "images/logo.png",
-  "version": "0.10.0",
+  "version": "0.99.0",
   "engines": {
     "vscode": "^1.96.0",
     "npm": ">=11.10.0"
@@ -221,6 +221,18 @@
         "title": "Refresh workspaces",
         "category": "Jujutsu",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "jj.viewChange",
+        "title": "View change",
+        "category": "Jujutsu",
+        "icon": "$(files)"
+      },
+      {
+        "command": "jj.openChangeFileDiff",
+        "title": "Open changes",
+        "category": "Jujutsu",
+        "icon": "$(compare-changes)"
       }
     ],
     "menus": {
@@ -476,6 +488,14 @@
         {
           "command": "jj.openWorkspace",
           "when": "false"
+        },
+        {
+          "command": "jj.viewChange",
+          "when": "false"
+        },
+        {
+          "command": "jj.openChangeFileDiff",
+          "when": "false"
         }
       ]
     },
@@ -486,6 +506,12 @@
           "type": "boolean",
           "default": true,
           "description": "Enables in-line blame annotations",
+          "scope": "resource"
+        },
+        "jjk.enableAnnotationHover": {
+          "type": "boolean",
+          "default": true,
+          "description": "Shows commit details and actions when hovering over an in-line blame annotation",
           "scope": "resource"
         },
         "jjk.commandTimeout": {

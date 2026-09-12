@@ -49,6 +49,13 @@ export interface InitCommandHandlers {
   readonly selectWorkspace: (repositoryRoot?: string) => unknown;
   readonly openWorkspace: (workspaceRoot: string) => unknown;
   readonly refreshWorkspaces: () => unknown;
+  readonly viewChange: (repositoryRoot: string, rev: string) => unknown;
+  readonly openChangeFileDiff: (
+    rev: string,
+    fsPath: string,
+    line?: number,
+    label?: string,
+  ) => unknown;
 }
 
 export interface GlobalCommandHandlers {
@@ -208,6 +215,15 @@ export async function registerInitCommands(
     vscode.commands.registerCommand(
       "jj.refreshWorkspaces",
       handlers.refreshWorkspaces,
+    ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand("jj.viewChange", handlers.viewChange),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.openChangeFileDiff",
+      handlers.openChangeFileDiff,
     ),
   );
 }

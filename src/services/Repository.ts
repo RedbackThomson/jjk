@@ -447,6 +447,8 @@ export const readFile = (
     );
   });
 
+// Emits commit IDs rather than change IDs: a divergent change ID resolves to
+// more than one revision, so callers could not use it as a revset.
 export const annotate = (
   _config: RepositoryConfig,
   filepath: string,
@@ -454,15 +456,58 @@ export const annotate = (
 ): Effect.Effect<string[], JJCliError | JJImmutableError, RepositoryEnv> =>
   Effect.gen(function* () {
     const cli = yield* JJCli;
-    const output = yield* cli.run(["file", "annotate", "-r", rev, filepath], {
-      timeout: 60_000,
-      ignoreWorkingCopy: true,
-    });
+    const output = yield* cli.run(
+      [
+        "file",
+        "annotate",
+        "-r",
+        rev,
+        "-T",
+        'commit.commit_id() ++ "\\n"',
+        filepath,
+      ],
+      {
+        timeout: 60_000,
+        ignoreWorkingCopy: true,
+      },
+    );
     if (output === "") {
       return [];
     }
-    const lines = output.trim().split("\n");
-    return lines.map((line) => line.split(" ")[0]);
+    return output.trimEnd().split("\n");
+  });
+
+// Resolves the path a file had before `rev`. If `rev` renamed the file, the
+// path at its parent is the rename source; otherwise it is unchanged.
+export const getOriginalPath = (
+  config: RepositoryConfig,
+  rev: string,
+  filepath: string,
+): Effect.Effect<string, JJCliError | JJImmutableError, RepositoryEnv> =>
+  Effect.gen(function* () {
+    const cli = yield* JJCli;
+    const output = yield* cli.run(["diff", "--summary", "-r", rev], {
+      timeout: 10_000,
+      ignoreWorkingCopy: true,
+    });
+    const normalizedTarget = path.normalize(filepath).replace(/\\/g, "/");
+    for (const raw of output.trim().split("\n")) {
+      const line = raw.trim();
+      if (line.charAt(0) !== "R" && line.charAt(0) !== "C") {
+        continue;
+      }
+      const parsed = parseRenamePaths(line.slice(2).trim());
+      if (!parsed) {
+        continue;
+      }
+      const toPath = path
+        .join(config.repositoryRoot, parsed.toPath)
+        .replace(/\\/g, "/");
+      if (pathEquals(toPath, normalizedTarget)) {
+        return path.join(config.repositoryRoot, parsed.fromPath);
+      }
+    }
+    return filepath;
   });
 
 export const log = (

@@ -15,6 +15,7 @@ import {
   jjIf,
   str,
   stringify,
+  raw,
   template,
   type RecordTemplate,
 } from "./jjTemplate";
@@ -61,6 +62,10 @@ export const showRecordTemplate = template({
 })
   .field("changeId", commit.change_id())
   .field("commitId", commit.commit_id())
+  .field("shortChangeId", commit.change_id().shortest(raw("8")))
+  .field("shortCommitId", commit.commit_id().shortest(raw("8")))
+  .field("uniqueChangeIdPrefix", commit.change_id().shortest())
+  .field("uniqueCommitIdPrefix", commit.commit_id().shortest())
   .field(
     "parentChangeIds",
     parentIdList((p) => p.change_id()),
@@ -75,6 +80,7 @@ export const showRecordTemplate = template({
     "authoredDate",
     commit.author().timestamp().local().format(str("%F %H:%M:%S")),
   )
+  .field("relativeAuthoredDate", commit.author().timestamp().ago())
   .field("description", commit.description().escape_json())
   .field("empty", commit.empty())
   .field("conflict", commit.conflict())
@@ -88,6 +94,10 @@ export const showPaginatedRecordTemplate = template({
 })
   .field("changeId", commit.change_id())
   .field("commitId", commit.commit_id())
+  .field("shortChangeId", commit.change_id().shortest(raw("8")))
+  .field("shortCommitId", commit.commit_id().shortest(raw("8")))
+  .field("uniqueChangeIdPrefix", commit.change_id().shortest())
+  .field("uniqueCommitIdPrefix", commit.commit_id().shortest())
   .field(
     "parentChangeIds",
     parentIdList((p) => p.change_id()),
@@ -102,6 +112,7 @@ export const showPaginatedRecordTemplate = template({
     "authoredDate",
     commit.author().timestamp().local().format(str("%F %H:%M:%S")),
   )
+  .field("relativeAuthoredDate", commit.author().timestamp().ago())
   .field("description", commit.description().escape_json())
   .field("empty", commit.empty())
   .field("conflict", commit.conflict())
@@ -374,6 +385,10 @@ export function parseShowResult(
     change: {
       changeId: "",
       commitId: "",
+      shortChangeId: "",
+      shortCommitId: "",
+      uniqueChangeIdPrefix: "",
+      uniqueCommitIdPrefix: "",
       parentChangeIds: [],
       parentCommitIds: [],
       description: "",
@@ -382,6 +397,7 @@ export function parseShowResult(
         name: "",
       },
       authoredDate: "",
+      relativeAuthoredDate: "",
       isEmpty: false,
       isConflict: false,
     },
@@ -398,6 +414,18 @@ export function parseShowResult(
         break;
       case "commitId":
         ret.change.commitId = value;
+        break;
+      case "shortChangeId":
+        ret.change.shortChangeId = value;
+        break;
+      case "shortCommitId":
+        ret.change.shortCommitId = value;
+        break;
+      case "uniqueChangeIdPrefix":
+        ret.change.uniqueChangeIdPrefix = value;
+        break;
+      case "uniqueCommitIdPrefix":
+        ret.change.uniqueCommitIdPrefix = value;
         break;
       case "parentChangeIds": {
         ret.change.parentChangeIds = parseJsonStringArray(
@@ -421,6 +449,9 @@ export function parseShowResult(
         break;
       case "authoredDate":
         ret.change.authoredDate = value;
+        break;
+      case "relativeAuthoredDate":
+        ret.change.relativeAuthoredDate = value;
         break;
       case "description":
         {
@@ -530,7 +561,9 @@ export function parseOperationLog(
           op.snapshot = value === "true";
           break;
         default:
-          throw new Error(`Unexpected operation log field: ${rt.fields[i].name}`);
+          throw new Error(
+            `Unexpected operation log field: ${rt.fields[i].name}`,
+          );
       }
     }
     ret.push(op);
@@ -571,7 +604,7 @@ export function parseLog(output: string): ChangeNode[] {
 
   for (let i = 0; i < lines.length; i += 2) {
     const oddLine = lines[i];
-    let evenLine = lines[i + 1] || "";
+    const evenLine = lines[i + 1] || "";
 
     let changeId = "";
     if (i % 2 === 0) {
@@ -583,10 +616,6 @@ export function parseLog(output: string): ChangeNode[] {
 
     const match = evenLine.match(/([a-zA-Z0-9(].*)/);
     const description = match ? match[1] : "";
-
-    if (description) {
-      evenLine = evenLine.replace(description, "");
-    }
 
     const emailMatch = oddLine.match(
       /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/,

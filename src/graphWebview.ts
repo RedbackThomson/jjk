@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import path from "path";
 import type { RepoHandle } from "./repoHandle";
+import type { ChangeStats } from "./changeStats";
 
 type Message = {
   command: string;
@@ -11,14 +12,7 @@ type Message = {
 
 export interface GraphChangeDetails {
   readonly fullDescription: string;
-  readonly stats: {
-    readonly total: number;
-    readonly added: number;
-    readonly modified: number;
-    readonly removed: number;
-    readonly renamed: number;
-    readonly copied: number;
-  };
+  readonly stats: ChangeStats;
 }
 
 export interface GraphRenderData {

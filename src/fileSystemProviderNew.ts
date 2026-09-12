@@ -142,17 +142,29 @@ export class JJFileSystemProviderNew implements FileSystemProvider {
     const rev =
       "diffOriginalRev" in params ? params.diffOriginalRev : params.rev;
 
+    // The original side of a diff for `rev` is the file at its parent. A file
+    // absent there (for example, one added in `rev`) has empty original content.
+    const readOriginalAtParent = readFileEffect(
+      repo.config,
+      `${rev}-`,
+      uri.fsPath,
+    ).pipe(
+      Effect.catchAll((error) =>
+        error instanceof Error && error.message.includes("No such path")
+          ? Effect.succeed(new Uint8Array())
+          : Effect.fail(error),
+      ),
+    );
+
     const effect =
       "diffOriginalRev" in params
         ? // Try getDiffOriginal first (fakeeditor-based, handles renames correctly),
-          // then fall back to readFile
+          // then fall back to reading the parent revision directly.
           getDiffOriginal(repo.config, rev, uri.fsPath).pipe(
             Effect.flatMap((data) =>
-              data
-                ? Effect.succeed(data)
-                : readFileEffect(repo.config, rev, uri.fsPath),
+              data ? Effect.succeed(data) : readOriginalAtParent,
             ),
-            Effect.catchAll(() => readFileEffect(repo.config, rev, uri.fsPath)),
+            Effect.catchAll(() => readOriginalAtParent),
           )
         : readFileEffect(repo.config, rev, uri.fsPath);
 

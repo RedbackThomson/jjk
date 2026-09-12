@@ -17,6 +17,7 @@ import { getActiveTextEditor } from "./services/Vscode";
 import { setupAnnotations } from "./annotations";
 import type { RepoEffectEnv, RepoCommandEffect } from "./commandHandlerShared";
 import { WorkspaceManager } from "./workspaceTreeView";
+import { getChangeStats, type ChangeStats } from "./changeStats";
 
 export interface ExtensionViews {
   readonly graphWebview: JJGraphWebview | undefined;
@@ -117,14 +118,7 @@ export async function initializeExtensionViews(
   ): Promise<
     | {
         fullDescription: string;
-        stats: {
-          total: number;
-          added: number;
-          modified: number;
-          removed: number;
-          renamed: number;
-          copied: number;
-        };
+        stats: ChangeStats;
       }
     | undefined
   > =>
@@ -134,23 +128,7 @@ export async function initializeExtensionViews(
           Effect.map((showResult) => ({
             fullDescription:
               showResult.change.description || "(no description set)",
-            stats: {
-              total: showResult.fileStatuses.length,
-              added: showResult.fileStatuses.filter((file) => file.type === "A")
-                .length,
-              modified: showResult.fileStatuses.filter(
-                (file) => file.type === "M",
-              ).length,
-              removed: showResult.fileStatuses.filter(
-                (file) => file.type === "D",
-              ).length,
-              renamed: showResult.fileStatuses.filter(
-                (file) => file.type === "R",
-              ).length,
-              copied: showResult.fileStatuses.filter(
-                (file) => file.type === "C",
-              ).length,
-            },
+            stats: getChangeStats(showResult.fileStatuses),
           })),
         ),
       )
@@ -276,6 +254,8 @@ export async function initializeExtensionViews(
     dispatchExtensionEffect: deps.dispatchExtensionEffect,
     findRepoByUri: deps.findRepoByUri,
     runRepoEffect: deps.runRepoEffect,
+    runRepoCommand: deps.runRepoCommand,
+    retryImmutable: deps.retryImmutable,
   });
 
   return {

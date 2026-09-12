@@ -19,6 +19,10 @@ export interface Change {
 }
 
 export interface ChangeWithDetails extends Change {
+  shortChangeId: string;
+  shortCommitId: string;
+  uniqueChangeIdPrefix: string;
+  uniqueCommitIdPrefix: string;
   author: {
     name: string;
     email: string;

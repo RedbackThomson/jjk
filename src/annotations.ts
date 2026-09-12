@@ -7,7 +7,7 @@ import { getActiveTextEditor, getConfigurationValue } from "./services/Vscode";
 import { annotate, getShow, jjEdit } from "./services/Repository";
 import type { RepoHandle } from "./repoHandle";
 import { getParams } from "./uri";
-import type { ChangeWithDetails } from "./types";
+import type { FileStatus, Show } from "./types";
 import type { RepoCommandEffect } from "./commandHandlerShared";
 
 import type { JjWatchmanRegisterSnapshotTriggerRef } from "./services/JjWatchmanSnapshotTriggerRef";
@@ -30,44 +30,161 @@ interface AnnotationInfo {
 }
 
 const COPY_CHANGE_ID_COMMAND = "jj.copyChangeId";
+const COPY_COMMIT_ID_COMMAND = "jj.copyCommitId";
 const EDIT_ANNOTATED_CHANGE_COMMAND = "jj.editAnnotatedChange";
 
+export function formatRelativeDate(
+  authoredDate: string,
+  now: Date = new Date(),
+): string {
+  const authored = new Date(authoredDate.replace(" ", "T"));
+  if (Number.isNaN(authored.getTime())) {
+    return "";
+  }
+
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((now.getTime() - authored.getTime()) / 1_000),
+  );
+  const units: readonly [number, string][] = [
+    [365 * 24 * 60 * 60, "year"],
+    [30 * 24 * 60 * 60, "month"],
+    [7 * 24 * 60 * 60, "week"],
+    [24 * 60 * 60, "day"],
+    [60 * 60, "hour"],
+    [60, "minute"],
+  ];
+  for (const [seconds, label] of units) {
+    if (elapsedSeconds >= seconds) {
+      const count = Math.floor(elapsedSeconds / seconds);
+      return `${count} ${label}${count === 1 ? "" : "s"} ago`;
+    }
+  }
+  return "just now";
+}
+
+function appendSegmentedId(
+  hover: vscode.MarkdownString,
+  label: string,
+  displayId: string,
+  uniquePrefix: string,
+) {
+  const prefixLength = displayId.startsWith(uniquePrefix)
+    ? uniquePrefix.length
+    : displayId.length;
+  hover.appendMarkdown(`**${label}:** **`);
+  hover.appendText(displayId.slice(0, prefixLength));
+  hover.appendMarkdown("**");
+  hover.appendText(displayId.slice(prefixLength));
+}
+
+function formatFileSummary(fileStatuses: readonly FileStatus[]): string {
+  const counts = new Map<string, number>();
+  for (const file of fileStatuses) {
+    counts.set(file.type, (counts.get(file.type) ?? 0) + 1);
+  }
+  const parts = [
+    `${fileStatuses.length} file${fileStatuses.length === 1 ? "" : "s"}`,
+  ];
+  const labels: readonly [FileStatus["type"], string][] = [
+    ["A", "added"],
+    ["M", "modified"],
+    ["D", "deleted"],
+    ["R", "renamed"],
+    ["C", "copied"],
+  ];
+  for (const [type, label] of labels) {
+    const count = counts.get(type);
+    if (count) {
+      parts.push(`${count} ${label}`);
+    }
+  }
+  return parts.join(" · ");
+}
+
 export function buildAnnotationHover(
-  change: ChangeWithDetails,
+  show: Show,
   repositoryRoot: string,
+  now: Date = new Date(),
 ): vscode.MarkdownString {
+  const change = show.change;
   const hover = new vscode.MarkdownString();
   hover.isTrusted = {
-    enabledCommands: [COPY_CHANGE_ID_COMMAND, EDIT_ANNOTATED_CHANGE_COMMAND],
+    enabledCommands: [
+      COPY_CHANGE_ID_COMMAND,
+      COPY_COMMIT_ID_COMMAND,
+      EDIT_ANNOTATED_CHANGE_COMMAND,
+    ],
   };
+  hover.supportThemeIcons = true;
 
-  hover.appendMarkdown("**Commit**\n\n");
-  hover.appendText(change.description || "(no description)");
+  hover.appendMarkdown("$(account) **");
+  hover.appendText(
+    change.author.name || change.author.email || "Unknown author",
+  );
+  hover.appendMarkdown("**");
+  const relativeDate = formatRelativeDate(change.authoredDate, now);
+  if (relativeDate) {
+    hover.appendMarkdown(" · ");
+    hover.appendText(relativeDate);
+  }
+  hover.appendMarkdown("  \n");
+  if (change.author.email && change.author.email !== change.author.name) {
+    hover.appendText(change.author.email);
+    hover.appendMarkdown(" · ");
+  }
+  hover.appendMarkdown("_");
+  hover.appendText(change.authoredDate);
+  hover.appendMarkdown("_\n\n---\n\n");
+
+  const description = change.description || "(no description)";
+  const [subject, ...bodyLines] = description.split("\n");
+  hover.appendMarkdown("### ");
+  hover.appendText(subject);
+  const body = bodyLines.join("\n").trim();
+  if (body) {
+    hover.appendMarkdown("\n\n");
+    hover.appendText(body);
+  }
   hover.appendMarkdown("\n\n");
 
-  hover.appendMarkdown("**Author:** ");
-  hover.appendText(
-    change.author.email
-      ? `${change.author.name} <${change.author.email}>`
-      : change.author.name,
+  hover.appendMarkdown("$(git-commit) ");
+  appendSegmentedId(
+    hover,
+    "Change",
+    change.shortChangeId,
+    change.uniqueChangeIdPrefix,
   );
-  hover.appendMarkdown("  \n**Authored:** ");
-  hover.appendText(change.authoredDate);
-  hover.appendMarkdown("\n\n**Change ID:** `");
-  hover.appendText(change.changeId);
-  hover.appendMarkdown("`  \n**Commit ID:** `");
-  hover.appendText(change.commitId);
-  hover.appendMarkdown("`\n\n");
+  hover.appendMarkdown("  \n$(circle-filled) ");
+  appendSegmentedId(
+    hover,
+    "Commit",
+    change.shortCommitId,
+    change.uniqueCommitIdPrefix,
+  );
+  if (change.parentChangeIds.length > 0) {
+    hover.appendMarkdown(
+      `  \n$(git-merge) ${change.parentChangeIds.length} parent${change.parentChangeIds.length === 1 ? "" : "s"}`,
+    );
+  }
+  hover.appendMarkdown("  \n$(files) ");
+  hover.appendText(formatFileSummary(show.fileStatuses));
+  hover.appendMarkdown("\n\n---\n\n");
 
-  const copyCommandArgs = encodeURIComponent(JSON.stringify([change.changeId]));
+  const copyChangeCommandArgs = encodeURIComponent(
+    JSON.stringify([change.shortChangeId]),
+  );
+  const copyCommitCommandArgs = encodeURIComponent(
+    JSON.stringify([change.shortCommitId]),
+  );
   const editCommandArgs = encodeURIComponent(
     JSON.stringify([repositoryRoot, change.changeId]),
   );
   hover.appendMarkdown(
-    `[$(copy) Copy Change ID](command:${COPY_CHANGE_ID_COMMAND}?${copyCommandArgs}) · ` +
-      `[$(edit) Edit This Change](command:${EDIT_ANNOTATED_CHANGE_COMMAND}?${editCommandArgs})`,
+    `[$(copy) Copy Change](command:${COPY_CHANGE_ID_COMMAND}?${copyChangeCommandArgs}) · ` +
+      `[$(copy) Copy Commit](command:${COPY_COMMIT_ID_COMMAND}?${copyCommitCommandArgs}) · ` +
+      `[$(edit) Edit Change](command:${EDIT_ANNOTATED_CHANGE_COMMAND}?${editCommandArgs})`,
   );
-  hover.supportThemeIcons = true;
   return hover;
 }
 
@@ -110,6 +227,21 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
         await vscode.env.clipboard.writeText(changeId);
         vscode.window.setStatusBarMessage(
           `Copied Jujutsu change ID ${changeId}`,
+          2_000,
+        );
+      },
+    ),
+  );
+  await deps.registerScoped(() =>
+    vscode.commands.registerCommand(
+      COPY_COMMIT_ID_COMMAND,
+      async (commitId: unknown) => {
+        if (typeof commitId !== "string" || commitId.length === 0) {
+          return;
+        }
+        await vscode.env.clipboard.writeText(commitId);
+        vscode.window.setStatusBarMessage(
+          `Copied Git commit ID ${commitId}`,
           2_000,
         );
       },
@@ -282,9 +414,7 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
             deps
               .runRepoEffect(repo, getShow(repo.config, changeId))
               .pipe(
-                Effect.map(
-                  (showResult) => [changeId, showResult.change] as const,
-                ),
+                Effect.map((showResult) => [changeId, showResult] as const),
               ),
           { concurrency: "unbounded" },
         ),
@@ -307,21 +437,19 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
           continue;
         }
 
-        const change = changes.get(changeId);
-        if (!change) {
+        const show = changes.get(changeId);
+        if (!show) {
           continue;
         }
+        const change = show.change;
 
         decorations.push({
-          hoverMessage: buildAnnotationHover(
-            change,
-            repo.config.repositoryRoot,
-          ),
+          hoverMessage: buildAnnotationHover(show, repo.config.repositoryRoot),
           renderOptions: {
             after: {
               backgroundColor: "#00000000",
               color: "#99999959",
-              contentText: ` ${change.author.name} at ${change.authoredDate} • ${change.description || "(no description)"} • ${change.changeId.substring(0, 8)} `,
+              contentText: ` ${change.author.name} at ${change.authoredDate} • ${change.description || "(no description)"} • ${change.shortChangeId} `,
               textDecoration: "none;",
             },
           },

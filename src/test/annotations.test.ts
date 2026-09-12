@@ -7,6 +7,7 @@ suite("annotation hover", () => {
   let buildAnnotationHover: (
     show: Show,
     repositoryRoot: string,
+    context?: { filePath: string; line: number },
   ) => import("vscode").MarkdownString;
 
   suiteSetup(async () => {
@@ -40,7 +41,10 @@ suite("annotation hover", () => {
   };
 
   test("shows commit metadata, file stats, and scoped actions", () => {
-    const hover = buildAnnotationHover(show, repositoryRoot);
+    const hover = buildAnnotationHover(show, repositoryRoot, {
+      filePath: "/repo/old.ts",
+      line: 12,
+    });
 
     assert.ok(hover.value.includes("Add hover details"));
     assert.ok(hover.value.includes("4 weeks ago"));
@@ -51,11 +55,15 @@ suite("annotation hover", () => {
     assert.ok(hover.value.includes("command:jj.copyChangeId?"));
     assert.ok(hover.value.includes("command:jj.copyCommitId?"));
     assert.ok(hover.value.includes("command:jj.editAnnotatedChange?"));
+    assert.ok(hover.value.includes("command:jj.viewChange?"));
+    assert.ok(hover.value.includes("command:jj.openChangeFileDiff?"));
     assert.deepStrictEqual(hover.isTrusted, {
       enabledCommands: [
         "jj.copyChangeId",
         "jj.copyCommitId",
         "jj.editAnnotatedChange",
+        "jj.viewChange",
+        "jj.openChangeFileDiff",
       ],
     });
   });

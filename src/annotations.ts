@@ -4,7 +4,12 @@ import type { JJCli } from "./services/JJCli";
 import type { ExtensionResources } from "./services/ExtensionResources";
 import type { Vscode } from "./services/Vscode";
 import { getActiveTextEditor, getConfigurationValue } from "./services/Vscode";
-import { annotate, getShow, jjEdit } from "./services/Repository";
+import {
+  annotate,
+  getOriginalPath,
+  getShow,
+  jjEdit,
+} from "./services/Repository";
 import type { RepoHandle } from "./repoHandle";
 import { getParams } from "./uri";
 import type { Show } from "./types";
@@ -33,6 +38,13 @@ interface AnnotationInfo {
 const COPY_CHANGE_ID_COMMAND = "jj.copyChangeId";
 const COPY_COMMIT_ID_COMMAND = "jj.copyCommitId";
 const EDIT_ANNOTATED_CHANGE_COMMAND = "jj.editAnnotatedChange";
+const VIEW_CHANGE_COMMAND = "jj.viewChange";
+const OPEN_CHANGE_FILE_DIFF_COMMAND = "jj.openChangeFileDiff";
+
+interface AnnotationHoverContext {
+  readonly filePath: string;
+  readonly line: number;
+}
 
 function appendSegmentedId(
   hover: vscode.MarkdownString,
@@ -52,6 +64,7 @@ function appendSegmentedId(
 export function buildAnnotationHover(
   show: Show,
   repositoryRoot: string,
+  context?: AnnotationHoverContext,
 ): vscode.MarkdownString {
   const change = show.change;
   const hover = new vscode.MarkdownString();
@@ -60,6 +73,8 @@ export function buildAnnotationHover(
       COPY_CHANGE_ID_COMMAND,
       COPY_COMMIT_ID_COMMAND,
       EDIT_ANNOTATED_CHANGE_COMMAND,
+      VIEW_CHANGE_COMMAND,
+      OPEN_CHANGE_FILE_DIFF_COMMAND,
     ],
   };
   hover.supportThemeIcons = true;
@@ -125,11 +140,25 @@ export function buildAnnotationHover(
   const editCommandArgs = encodeURIComponent(
     JSON.stringify([repositoryRoot, change.changeId]),
   );
+  const viewChangeCommandArgs = encodeURIComponent(
+    JSON.stringify([repositoryRoot, change.changeId]),
+  );
   hover.appendMarkdown(
     `[$(copy) Copy Change](command:${COPY_CHANGE_ID_COMMAND}?${copyChangeCommandArgs}) · ` +
       `[$(copy) Copy Commit](command:${COPY_COMMIT_ID_COMMAND}?${copyCommitCommandArgs}) · ` +
       `[$(edit) Edit Change](command:${EDIT_ANNOTATED_CHANGE_COMMAND}?${editCommandArgs})`,
   );
+  hover.appendMarkdown(
+    `  \n[$(files) View Change](command:${VIEW_CHANGE_COMMAND}?${viewChangeCommandArgs})`,
+  );
+  if (context) {
+    const openChangesCommandArgs = encodeURIComponent(
+      JSON.stringify([change.changeId, context.filePath, context.line]),
+    );
+    hover.appendMarkdown(
+      ` · [$(compare-changes) Open Changes](command:${OPEN_CHANGE_FILE_DIFF_COMMAND}?${openChangesCommandArgs})`,
+    );
+  }
   return hover;
 }
 
@@ -303,8 +332,21 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
       }
 
       const rev = getAnnotationRev(uri);
+      const params = uri.scheme === "jj" ? getParams(uri) : undefined;
+      const annotateEffect =
+        params && "diffOriginalRev" in params
+          ? getOriginalPath(
+              repo.config,
+              params.diffOriginalRev,
+              uri.fsPath,
+            ).pipe(
+              Effect.flatMap((originalPath) =>
+                annotate(repo.config, originalPath, rev),
+              ),
+            )
+          : annotate(repo.config, uri.fsPath, rev);
       const changeIdsByLine = yield* deps
-        .runRepoEffect(repo, annotate(repo.config, uri.fsPath, rev))
+        .runRepoEffect(repo, annotateEffect)
         .pipe(
           Effect.catchIf(
             (error) => error.message.includes("more than one revision"),
@@ -397,7 +439,10 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
 
         decorations.push({
           hoverMessage: annotationHoverEnabled
-            ? buildAnnotationHover(show, repo.config.repositoryRoot)
+            ? buildAnnotationHover(show, repo.config.repositoryRoot, {
+                filePath: editor.document.uri.fsPath,
+                line,
+              })
             : undefined,
           renderOptions: {
             after: {

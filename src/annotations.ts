@@ -46,19 +46,36 @@ interface AnnotationHoverContext {
   readonly line: number;
 }
 
-function appendSegmentedId(
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function appendTooltipText(
   hover: vscode.MarkdownString,
-  label: string,
+  text: string,
+  tooltip: string,
+  bold = false,
+) {
+  const escapedText = escapeHtml(text);
+  const content = bold ? `<strong>${escapedText}</strong>` : escapedText;
+  hover.appendMarkdown(
+    `<span title="${escapeHtml(tooltip)}">${content}</span>`,
+  );
+}
+
+function formatSegmentedId(
   displayId: string,
   uniquePrefix: string,
-) {
+): string {
   const prefixLength = displayId.startsWith(uniquePrefix)
     ? uniquePrefix.length
     : displayId.length;
-  hover.appendMarkdown(`**${label}:** **`);
-  hover.appendText(displayId.slice(0, prefixLength));
-  hover.appendMarkdown("**");
-  hover.appendText(displayId.slice(prefixLength));
+  return `**${displayId.slice(0, prefixLength)}**${displayId.slice(prefixLength)}`;
 }
 
 export function buildAnnotationHover(
@@ -78,24 +95,30 @@ export function buildAnnotationHover(
     ],
   };
   hover.supportThemeIcons = true;
+  hover.supportHtml = true;
 
-  hover.appendMarkdown("$(account) **");
-  hover.appendText(
-    change.author.name || change.author.email || "Unknown author",
-  );
-  hover.appendMarkdown("**");
+  const authorName =
+    change.author.name || change.author.email || "Unknown author";
+  hover.appendMarkdown("$(account) ");
+  if (change.author.email) {
+    appendTooltipText(hover, authorName, change.author.email, true);
+  } else {
+    hover.appendMarkdown("**");
+    hover.appendText(authorName);
+    hover.appendMarkdown("**");
+  }
   if (change.relativeAuthoredDate) {
     hover.appendMarkdown(" · ");
-    hover.appendText(change.relativeAuthoredDate);
-  }
-  hover.appendMarkdown("  \n");
-  if (change.author.email && change.author.email !== change.author.name) {
-    hover.appendText(change.author.email);
+    appendTooltipText(
+      hover,
+      change.relativeAuthoredDate,
+      change.authoredDate,
+    );
+  } else if (change.authoredDate) {
     hover.appendMarkdown(" · ");
+    hover.appendText(change.authoredDate);
   }
-  hover.appendMarkdown("_");
-  hover.appendText(change.authoredDate);
-  hover.appendMarkdown("_\n\n---\n\n");
+  hover.appendMarkdown("\n\n---\n\n");
 
   const description = change.description || "(no description)";
   const [subject, ...bodyLines] = description.split("\n");
@@ -108,26 +131,12 @@ export function buildAnnotationHover(
   }
   hover.appendMarkdown("\n\n");
 
-  hover.appendMarkdown("$(git-commit) ");
-  appendSegmentedId(
-    hover,
-    "Change",
-    change.shortChangeId,
-    change.uniqueChangeIdPrefix,
-  );
-  hover.appendMarkdown("  \n$(circle-filled) ");
-  appendSegmentedId(
-    hover,
-    "Commit",
-    change.shortCommitId,
-    change.uniqueCommitIdPrefix,
-  );
   if (change.parentChangeIds.length > 0) {
     hover.appendMarkdown(
-      `  \n$(git-merge) ${change.parentChangeIds.length} parent${change.parentChangeIds.length === 1 ? "" : "s"}`,
+      `$(git-merge) ${change.parentChangeIds.length} parent${change.parentChangeIds.length === 1 ? "" : "s"} &nbsp;·&nbsp; `,
     );
   }
-  hover.appendMarkdown("  \n$(files) ");
+  hover.appendMarkdown("$(files) ");
   hover.appendText(formatChangeStats(getChangeStats(show.fileStatuses)));
   hover.appendMarkdown("\n\n---\n\n");
 
@@ -143,20 +152,26 @@ export function buildAnnotationHover(
   const viewChangeCommandArgs = encodeURIComponent(
     JSON.stringify([repositoryRoot, change.changeId]),
   );
-  hover.appendMarkdown(
-    `[$(copy) Copy Change](command:${COPY_CHANGE_ID_COMMAND}?${copyChangeCommandArgs}) · ` +
-      `[$(copy) Copy Commit](command:${COPY_COMMIT_ID_COMMAND}?${copyCommitCommandArgs}) · ` +
-      `[$(edit) Edit Change](command:${EDIT_ANNOTATED_CHANGE_COMMAND}?${editCommandArgs})`,
+  const formattedChangeId = formatSegmentedId(
+    change.shortChangeId,
+    change.uniqueChangeIdPrefix,
+  );
+  const formattedCommitId = formatSegmentedId(
+    change.shortCommitId,
+    change.uniqueCommitIdPrefix,
   );
   hover.appendMarkdown(
-    `  \n[$(files) View Change](command:${VIEW_CHANGE_COMMAND}?${viewChangeCommandArgs})`,
+    `[$(copy)&nbsp;${formattedChangeId}](command:${COPY_CHANGE_ID_COMMAND}?${copyChangeCommandArgs} "Copy change ID") &nbsp; ` +
+      `[$(clippy)&nbsp;${formattedCommitId}](command:${COPY_COMMIT_ID_COMMAND}?${copyCommitCommandArgs} "Copy commit ID") &nbsp; ` +
+      `[$(edit)](command:${EDIT_ANNOTATED_CHANGE_COMMAND}?${editCommandArgs} "Edit this change") &nbsp; ` +
+      `[$(files)](command:${VIEW_CHANGE_COMMAND}?${viewChangeCommandArgs} "View all files in this change")`,
   );
   if (context) {
     const openChangesCommandArgs = encodeURIComponent(
       JSON.stringify([change.changeId, context.filePath, context.line]),
     );
     hover.appendMarkdown(
-      ` · [$(compare-changes) Open Changes](command:${OPEN_CHANGE_FILE_DIFF_COMMAND}?${openChangesCommandArgs})`,
+      ` &nbsp; [$(compare-changes)](command:${OPEN_CHANGE_FILE_DIFF_COMMAND}?${openChangesCommandArgs} "Open changes for this file")`,
     );
   }
   return hover;

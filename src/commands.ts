@@ -46,6 +46,9 @@ export interface InitCommandHandlers {
   readonly squashSelectedRanges: () => unknown;
   readonly openParentChange: (uri: vscode.Uri) => unknown;
   readonly openChildChange: (uri: vscode.Uri) => unknown;
+  readonly selectWorkspace: (repositoryRoot?: string) => unknown;
+  readonly openWorkspace: (workspaceRoot: string) => unknown;
+  readonly refreshWorkspaces: () => unknown;
 }
 
 export interface GlobalCommandHandlers {
@@ -190,6 +193,21 @@ export async function registerInitCommands(
     vscode.commands.registerCommand(
       "jj.openChildChange",
       handlers.openChildChange,
+    ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.selectWorkspace",
+      handlers.selectWorkspace,
+    ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand("jj.openWorkspace", handlers.openWorkspace),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.refreshWorkspaces",
+      handlers.refreshWorkspaces,
     ),
   );
 }

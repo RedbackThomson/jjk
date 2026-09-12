@@ -5,6 +5,7 @@ import { OperationLogManager } from "./operationLogTreeView";
 import {
   getOperationLog,
   getShow,
+  getWorkspaces,
   jjEdit,
   jjNew,
   log,
@@ -15,10 +16,12 @@ import type { Vscode } from "./services/Vscode";
 import { getActiveTextEditor } from "./services/Vscode";
 import { setupAnnotations } from "./annotations";
 import type { RepoEffectEnv, RepoCommandEffect } from "./commandHandlerShared";
+import { WorkspaceManager } from "./workspaceTreeView";
 
 export interface ExtensionViews {
   readonly graphWebview: JJGraphWebview | undefined;
   readonly operationLogManager: OperationLogManager | undefined;
+  readonly workspaceManager: WorkspaceManager | undefined;
   readonly getLastOpenedFileUri: () => vscode.Uri | undefined;
   readonly markGitFetchStarted: () => void;
   readonly refreshGitFetchStatus: () => Effect.Effect<void, Error, Vscode>;
@@ -215,6 +218,23 @@ export async function initializeExtensionViews(
     }),
   );
 
+  const workspaceManager = await deps.registerScoped(
+    () =>
+      new WorkspaceManager({
+        initialRepo: initialSelectedRepo,
+        loadWorkspaces: (repo) => repo.runPromise(getWorkspaces(repo.config)),
+      }),
+  );
+  void workspaceManager.refresh();
+  await deps.registerScoped(() =>
+    deps.selectedRepoController.onDidChange((repo) => {
+      deps.dispatchExtensionEffect(
+        Effect.promise(() => workspaceManager.setSelectedRepo(repo)),
+        "Failed to update workspace repository selection",
+      );
+    }),
+  );
+
   const statusBarItem = await deps.registerScoped(() =>
     vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100),
   );
@@ -261,6 +281,7 @@ export async function initializeExtensionViews(
   return {
     graphWebview,
     operationLogManager,
+    workspaceManager,
     getLastOpenedFileUri: () => lastOpenedFileUri,
     markGitFetchStarted: () => {
       statusBarItem.text = "$(sync~spin)";

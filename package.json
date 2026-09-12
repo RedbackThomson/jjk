@@ -34,6 +34,11 @@
           "id": "jjOperationLog",
           "name": "Operation Log (JJ)",
           "when": "jj.reposExist"
+        },
+        {
+          "id": "jjWorkspaces",
+          "name": "Workspaces (JJ)",
+          "when": "jj.reposExist"
         }
       ]
     },
@@ -198,6 +203,24 @@
         "title": "Open child change",
         "category": "Jujutsu",
         "icon": "$(arrow-right)"
+      },
+      {
+        "command": "jj.selectWorkspace",
+        "title": "Switch workspace",
+        "category": "Jujutsu",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "jj.openWorkspace",
+        "title": "Open workspace",
+        "category": "Jujutsu",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "jj.refreshWorkspaces",
+        "title": "Refresh workspaces",
+        "category": "Jujutsu",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -262,6 +285,11 @@
         {
           "command": "jj.selectGraphWebviewRepo",
           "when": "view == jjGraphWebview",
+          "group": "navigation"
+        },
+        {
+          "command": "jj.refreshWorkspaces",
+          "when": "view == jjWorkspaces",
           "group": "navigation"
         }
       ],
@@ -439,6 +467,14 @@
         },
         {
           "command": "jj.openChildChange",
+          "when": "false"
+        },
+        {
+          "command": "jj.selectWorkspace",
+          "when": "jj.reposExist"
+        },
+        {
+          "command": "jj.openWorkspace",
           "when": "false"
         }
       ]

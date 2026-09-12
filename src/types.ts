@@ -50,6 +50,23 @@ export type Operation = {
   snapshot: boolean;
 };
 
+export interface WorkspaceInfo {
+  name: string;
+  root: string;
+  changeId: string;
+  shortChangeId: string;
+  commitId: string;
+  shortCommitId: string;
+  bookmarks: string[];
+  description: string;
+  author: {
+    name: string;
+    email: string;
+  };
+  authoredDate: string;
+  rootExists: boolean;
+}
+
 export class JJCliError extends Data.TaggedError("JJCliError")<{
   message: string;
 }> {}

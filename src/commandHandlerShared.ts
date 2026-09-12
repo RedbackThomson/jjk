@@ -8,6 +8,7 @@ import { showQuickPick } from "./services/Vscode";
 import type { RepoHandle } from "./repoHandle";
 import type { JJGraphWebview } from "./graphWebview";
 import type { OperationLogManager } from "./operationLogTreeView";
+import type { WorkspaceManager } from "./workspaceTreeView";
 import type { SelectedRepositoryController } from "./selectedRepository";
 import type { RepoLocator } from "./repoLocator";
 import type { RepoState } from "./services/RepoState";
@@ -59,6 +60,7 @@ export interface CommandHandlerDeps {
   >;
   readonly getGraphWebview: () => JJGraphWebview | undefined;
   readonly getOperationLogManager: () => OperationLogManager | undefined;
+  readonly getWorkspaceManager: () => WorkspaceManager | undefined;
   readonly getLastOpenedFileUri: () => vscode.Uri | undefined;
   readonly markGitFetchStarted: () => void;
   readonly refreshGitFetchStatus: () => Effect.Effect<void, Error, Vscode>;

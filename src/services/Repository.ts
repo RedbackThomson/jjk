@@ -27,6 +27,7 @@ import {
   JJCliError,
   JJImmutableError,
   RepositoryDataError,
+  WorkspaceInfo,
 } from "../types";
 
 type RepositoryEnv =
@@ -87,6 +88,140 @@ export const getFileList = (
       ignoreWorkingCopy: true,
     });
     return output.trim().split("\n");
+  });
+
+type SerializedWorkspace = {
+  name: string;
+  target: {
+    change_id: string;
+    commit_id: string;
+    description: string;
+    author: {
+      name: string;
+      email: string;
+      timestamp: string;
+    };
+  };
+};
+
+type SerializedShortestId = string | { prefix: string; rest: string };
+
+const parseShortestId = (value: SerializedShortestId): string =>
+  typeof value === "string" ? value : `${value.prefix}${value.rest}`;
+
+type ParsedWorkspace = Omit<WorkspaceInfo, "rootExists">;
+
+/**
+ * `.root()` has no error-tolerant form, so jj renders an inline `<Error: ...>`
+ * placeholder when a workspace directory has been deleted. Such a workspace is
+ * still listed, and still forgettable, so it is reported with an empty root
+ * rather than failing the whole list.
+ */
+const parseWorkspaceRoot = (line: string): string => {
+  if (line.startsWith("<Error:")) {
+    return "";
+  }
+  const root = JSON.parse(line) as unknown;
+  if (typeof root !== "string") {
+    throw new Error("Workspace root has an unexpected shape.");
+  }
+  return root;
+};
+
+const parseWorkspaceList = (
+  output: string,
+): Effect.Effect<ParsedWorkspace[], RepositoryDataError> =>
+  Effect.gen(function* () {
+    if (!output.trim()) {
+      return [];
+    }
+
+    const lines = output.trimEnd().split("\n");
+    if (lines.length % 5 !== 0) {
+      return yield* Effect.fail(
+        new RepositoryDataError({
+          message: "Unexpected output from jj workspace list.",
+        }),
+      );
+    }
+
+    try {
+      const workspaces: ParsedWorkspace[] = [];
+      for (let index = 0; index < lines.length; index += 5) {
+        const workspace = JSON.parse(lines[index]) as SerializedWorkspace;
+        const workspaceRoot = parseWorkspaceRoot(lines[index + 1]);
+        const shortChangeId = parseShortestId(
+          JSON.parse(lines[index + 2]) as SerializedShortestId,
+        );
+        const shortCommitId = parseShortestId(
+          JSON.parse(lines[index + 3]) as SerializedShortestId,
+        );
+        const bookmarks = JSON.parse(lines[index + 4]) as string[];
+        if (
+          typeof workspace.name !== "string" ||
+          !workspace.target ||
+          typeof workspace.target.change_id !== "string" ||
+          typeof workspace.target.commit_id !== "string" ||
+          !Array.isArray(bookmarks)
+        ) {
+          throw new Error("Workspace record has an unexpected shape.");
+        }
+        workspaces.push({
+          name: workspace.name,
+          root: workspaceRoot,
+          changeId: workspace.target.change_id,
+          shortChangeId,
+          commitId: workspace.target.commit_id,
+          shortCommitId,
+          bookmarks,
+          description: workspace.target.description,
+          author: workspace.target.author,
+          authoredDate: workspace.target.author.timestamp,
+        });
+      }
+      return workspaces;
+    } catch (cause) {
+      return yield* Effect.fail(
+        new RepositoryDataError({
+          message: `Failed to parse jj workspace list: ${String(cause)}`,
+        }),
+      );
+    }
+  });
+
+export const getWorkspaces = (
+  _config: RepositoryConfig,
+): Effect.Effect<
+  WorkspaceInfo[],
+  JJCliError | JJImmutableError | RepositoryDataError,
+  RepositoryEnv
+> =>
+  Effect.gen(function* () {
+    const cli = yield* JJCli;
+    const output = yield* cli.run(
+      [
+        "workspace",
+        "list",
+        "-T",
+        'json(self) ++ "\\n" ++ json(root) ++ "\\n" ++ json(target.change_id().shortest(8)) ++ "\\n" ++ json(target.commit_id().shortest(8)) ++ "\\n" ++ json(target.local_bookmarks().map(|bookmark| bookmark.name())) ++ "\\n"',
+      ],
+      { timeout: 10_000, ignoreWorkingCopy: true },
+    );
+    const workspaces = yield* parseWorkspaceList(output);
+
+    return yield* Effect.forEach(workspaces, (workspace) =>
+      Effect.map(
+        workspace.root
+          ? Effect.promise(() =>
+              fs.stat(workspace.root).then(
+                (stats) => stats.isDirectory(),
+                () => false,
+              ),
+            )
+          : Effect.succeed(false),
+        (rootExists): WorkspaceInfo => ({ ...workspace, rootExists }),
+      ),
+    );
   });
 
 export const getShow = (

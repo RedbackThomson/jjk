@@ -7,9 +7,14 @@ import type {
   RepoCommandEffect,
 } from "./commandHandlerShared";
 import { selectRepositoryEffect, toError } from "./commandHandlerShared";
-import { executeCommand, showQuickPick } from "./services/Vscode";
+import {
+  executeCommand,
+  showQuickPick,
+  showWarningMessage,
+} from "./services/Vscode";
 import {
   getShow,
+  getWorkspaces,
   gitFetch,
   jjNew,
   log,
@@ -20,6 +25,17 @@ import { getActiveTextEditorDiff, pathEquals } from "./utils";
 import { getParams, toJJUri } from "./uri";
 import { provideOriginalResource } from "./jjUtils";
 import { OperationTreeItem } from "./operationLogTreeView";
+import type { WorkspaceInfo } from "./types";
+
+const workspaceIcon = (
+  workspace: WorkspaceInfo,
+  repositoryRoot: string,
+): string => {
+  if (!workspace.rootExists) {
+    return "$(warning)";
+  }
+  return pathEquals(workspace.root, repositoryRoot) ? "$(check)" : "$(folder)";
+};
 
 const getCurrentRev = (uri: vscode.Uri): string => {
   if (uri.scheme !== "jj") {
@@ -133,6 +149,9 @@ export const createNavigationInitHandlers = (
   | "gitFetch"
   | "openParentChange"
   | "openChildChange"
+  | "selectWorkspace"
+  | "openWorkspace"
+  | "refreshWorkspaces"
 > => ({
   openFileResourceState: (resourceState) =>
     deps.runExtensionEffect(
@@ -337,6 +356,86 @@ export const createNavigationInitHandlers = (
       "Failed to open child change",
     );
   },
+  selectWorkspace: (repositoryRootArgument) => {
+    const repo =
+      typeof repositoryRootArgument === "string"
+        ? deps.repoLocator.findRepoByUri(
+            vscode.Uri.file(repositoryRootArgument),
+          )
+        : deps.getWorkspaceManager()?.getSelectedRepo();
+    if (!repo) {
+      return;
+    }
+    const repositoryRoot = repo.config.repositoryRoot;
+
+    return deps.runRepoCommand(
+      repo,
+      Effect.gen(function* () {
+        const workspaces = yield* getWorkspaces(repo.config);
+        const items = workspaces.map((workspace) => ({
+          label: `${workspaceIcon(workspace, repositoryRoot)} ${workspace.name}`,
+          description: `${workspace.shortChangeId} · ${workspace.shortCommitId}`,
+          detail: [
+            workspace.rootExists ? undefined : "Missing workspace root",
+            workspace.bookmarks.length > 0
+              ? workspace.bookmarks.join(", ")
+              : undefined,
+            workspace.description.split("\n")[0] || "(no description)",
+            workspace.root || "Unresolved workspace root",
+          ]
+            .filter(Boolean)
+            .join(" — "),
+          workspace,
+        }));
+        const selected = yield* showQuickPick(items, {
+          placeHolder: "Select a Jujutsu workspace to open",
+          matchOnDescription: true,
+          matchOnDetail: true,
+        });
+        if (!selected || pathEquals(selected.workspace.root, repositoryRoot)) {
+          return;
+        }
+        if (!selected.workspace.rootExists) {
+          yield* showWarningMessage(
+            `Workspace "${selected.workspace.name}" cannot be opened because ${
+              selected.workspace.root || "its root directory"
+            } no longer exists.`,
+          );
+          return;
+        }
+        yield* executeCommand(
+          "vscode.openFolder",
+          vscode.Uri.file(selected.workspace.root),
+          { forceNewWindow: false },
+        );
+      }),
+      "Failed to switch workspace",
+    );
+  },
+  openWorkspace: (workspaceRoot) => {
+    if (typeof workspaceRoot !== "string" || workspaceRoot.length === 0) {
+      return;
+    }
+    return deps.runExtensionEffect(
+      executeCommand("vscode.openFolder", vscode.Uri.file(workspaceRoot), {
+        forceNewWindow: false,
+      }),
+      "Failed to open workspace",
+    );
+  },
+  refreshWorkspaces: () =>
+    deps.runExtensionEffect(
+      (() => {
+        const workspaceManager = deps.getWorkspaceManager();
+        return workspaceManager
+          ? Effect.tryPromise({
+              try: () => workspaceManager.refresh(),
+              catch: toError,
+            })
+          : Effect.void;
+      })(),
+      "Failed to refresh workspaces",
+    ),
 });
 
 export const createWorkspaceCommandHandlers = (

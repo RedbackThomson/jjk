@@ -80,6 +80,7 @@ export const showRecordTemplate = template({
     "authoredDate",
     commit.author().timestamp().local().format(str("%F %H:%M:%S")),
   )
+  .field("relativeAuthoredDate", commit.author().timestamp().ago())
   .field("description", commit.description().escape_json())
   .field("empty", commit.empty())
   .field("conflict", commit.conflict())
@@ -111,6 +112,7 @@ export const showPaginatedRecordTemplate = template({
     "authoredDate",
     commit.author().timestamp().local().format(str("%F %H:%M:%S")),
   )
+  .field("relativeAuthoredDate", commit.author().timestamp().ago())
   .field("description", commit.description().escape_json())
   .field("empty", commit.empty())
   .field("conflict", commit.conflict())
@@ -395,6 +397,7 @@ export function parseShowResult(
         name: "",
       },
       authoredDate: "",
+      relativeAuthoredDate: "",
       isEmpty: false,
       isConflict: false,
     },
@@ -446,6 +449,9 @@ export function parseShowResult(
         break;
       case "authoredDate":
         ret.change.authoredDate = value;
+        break;
+      case "relativeAuthoredDate":
+        ret.change.relativeAuthoredDate = value;
         break;
       case "description":
         {

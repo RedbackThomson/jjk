@@ -7,8 +7,9 @@ import { getActiveTextEditor, getConfigurationValue } from "./services/Vscode";
 import { annotate, getShow, jjEdit } from "./services/Repository";
 import type { RepoHandle } from "./repoHandle";
 import { getParams } from "./uri";
-import type { FileStatus, Show } from "./types";
+import type { Show } from "./types";
 import type { RepoCommandEffect } from "./commandHandlerShared";
+import { formatChangeStats, getChangeStats } from "./changeStats";
 
 import type { JjWatchmanRegisterSnapshotTriggerRef } from "./services/JjWatchmanSnapshotTriggerRef";
 
@@ -33,36 +34,6 @@ const COPY_CHANGE_ID_COMMAND = "jj.copyChangeId";
 const COPY_COMMIT_ID_COMMAND = "jj.copyCommitId";
 const EDIT_ANNOTATED_CHANGE_COMMAND = "jj.editAnnotatedChange";
 
-export function formatRelativeDate(
-  authoredDate: string,
-  now: Date = new Date(),
-): string {
-  const authored = new Date(authoredDate.replace(" ", "T"));
-  if (Number.isNaN(authored.getTime())) {
-    return "";
-  }
-
-  const elapsedSeconds = Math.max(
-    0,
-    Math.floor((now.getTime() - authored.getTime()) / 1_000),
-  );
-  const units: readonly [number, string][] = [
-    [365 * 24 * 60 * 60, "year"],
-    [30 * 24 * 60 * 60, "month"],
-    [7 * 24 * 60 * 60, "week"],
-    [24 * 60 * 60, "day"],
-    [60 * 60, "hour"],
-    [60, "minute"],
-  ];
-  for (const [seconds, label] of units) {
-    if (elapsedSeconds >= seconds) {
-      const count = Math.floor(elapsedSeconds / seconds);
-      return `${count} ${label}${count === 1 ? "" : "s"} ago`;
-    }
-  }
-  return "just now";
-}
-
 function appendSegmentedId(
   hover: vscode.MarkdownString,
   label: string,
@@ -78,34 +49,9 @@ function appendSegmentedId(
   hover.appendText(displayId.slice(prefixLength));
 }
 
-function formatFileSummary(fileStatuses: readonly FileStatus[]): string {
-  const counts = new Map<string, number>();
-  for (const file of fileStatuses) {
-    counts.set(file.type, (counts.get(file.type) ?? 0) + 1);
-  }
-  const parts = [
-    `${fileStatuses.length} file${fileStatuses.length === 1 ? "" : "s"}`,
-  ];
-  const labels: readonly [FileStatus["type"], string][] = [
-    ["A", "added"],
-    ["M", "modified"],
-    ["D", "deleted"],
-    ["R", "renamed"],
-    ["C", "copied"],
-  ];
-  for (const [type, label] of labels) {
-    const count = counts.get(type);
-    if (count) {
-      parts.push(`${count} ${label}`);
-    }
-  }
-  return parts.join(" · ");
-}
-
 export function buildAnnotationHover(
   show: Show,
   repositoryRoot: string,
-  now: Date = new Date(),
 ): vscode.MarkdownString {
   const change = show.change;
   const hover = new vscode.MarkdownString();
@@ -123,10 +69,9 @@ export function buildAnnotationHover(
     change.author.name || change.author.email || "Unknown author",
   );
   hover.appendMarkdown("**");
-  const relativeDate = formatRelativeDate(change.authoredDate, now);
-  if (relativeDate) {
+  if (change.relativeAuthoredDate) {
     hover.appendMarkdown(" · ");
-    hover.appendText(relativeDate);
+    hover.appendText(change.relativeAuthoredDate);
   }
   hover.appendMarkdown("  \n");
   if (change.author.email && change.author.email !== change.author.name) {
@@ -168,7 +113,7 @@ export function buildAnnotationHover(
     );
   }
   hover.appendMarkdown("  \n$(files) ");
-  hover.appendText(formatFileSummary(show.fileStatuses));
+  hover.appendText(formatChangeStats(getChangeStats(show.fileStatuses)));
   hover.appendMarkdown("\n\n---\n\n");
 
   const copyChangeCommandArgs = encodeURIComponent(
@@ -320,6 +265,12 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
       "enableAnnotations",
       vscode.Uri.file(repo.config.repositoryRoot),
     );
+  const getAnnotationHoverEnabled = (repo: RepoHandle) =>
+    getConfigurationValue<boolean>(
+      "jjk",
+      "enableAnnotationHover",
+      vscode.Uri.file(repo.config.repositoryRoot),
+    );
 
   const updateAnnotateInfoEffect = (
     uri: vscode.Uri,
@@ -385,6 +336,7 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
         yield* clearAnnotations(editor);
         return;
       }
+      const annotationHoverEnabled = yield* getAnnotationHoverEnabled(repo);
 
       const state = yield* Ref.get(annotationState);
       if (
@@ -444,7 +396,9 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
         const change = show.change;
 
         decorations.push({
-          hoverMessage: buildAnnotationHover(show, repo.config.repositoryRoot),
+          hoverMessage: annotationHoverEnabled
+            ? buildAnnotationHover(show, repo.config.repositoryRoot)
+            : undefined,
           renderOptions: {
             after: {
               backgroundColor: "#00000000",
@@ -531,6 +485,26 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
           yield* setDecorationsEffect(editor, state.activeLines);
         }),
         "Failed to refresh annotations after document change",
+      );
+    }),
+  );
+  await deps.registerScoped(() =>
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        !event.affectsConfiguration("jjk.enableAnnotations") &&
+        !event.affectsConfiguration("jjk.enableAnnotationHover")
+      ) {
+        return;
+      }
+      deps.dispatchExtensionEffect(
+        getActiveTextEditor().pipe(
+          Effect.flatMap((editor) =>
+            editor
+              ? handleDidChangeActiveTextEditorEffect(editor)
+              : Effect.void,
+          ),
+        ),
+        "Failed to update annotations after configuration change",
       );
     }),
   );

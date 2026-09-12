@@ -28,6 +28,7 @@ export interface ChangeWithDetails extends Change {
     email: string;
   };
   authoredDate: string;
+  relativeAuthoredDate: string;
   parentChangeIds: string[];
   parentCommitIds: string[];
 }

@@ -7,7 +7,6 @@ suite("annotation hover", () => {
   let buildAnnotationHover: (
     show: Show,
     repositoryRoot: string,
-    now?: Date,
   ) => import("vscode").MarkdownString;
 
   suiteSetup(async () => {
@@ -28,6 +27,7 @@ suite("annotation hover", () => {
         email: "joshka@users.noreply.github.com",
       },
       authoredDate: "2026-08-15 13:07:59",
+      relativeAuthoredDate: "4 weeks ago",
       description: "Add hover details\n\nDo not run [commands](command:evil).",
       isEmpty: false,
       isConflict: false,
@@ -40,17 +40,13 @@ suite("annotation hover", () => {
   };
 
   test("shows commit metadata, file stats, and scoped actions", () => {
-    const hover = buildAnnotationHover(
-      show,
-      repositoryRoot,
-      new Date("2026-09-12T13:07:59"),
-    );
+    const hover = buildAnnotationHover(show, repositoryRoot);
 
     assert.ok(hover.value.includes("Add hover details"));
     assert.ok(hover.value.includes("4 weeks ago"));
     assert.ok(hover.value.includes("**qtw**rprsu"));
     assert.ok(hover.value.includes("**87**668a50"));
-    assert.ok(hover.value.includes("2 files · 1 added · 1 modified"));
+    assert.ok(hover.value.includes("2 files changed · 1 modified · 1 added"));
     assert.ok(hover.value.includes("joshka@users.noreply.github.com"));
     assert.ok(hover.value.includes("command:jj.copyChangeId?"));
     assert.ok(hover.value.includes("command:jj.copyCommitId?"));

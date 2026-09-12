@@ -452,6 +452,12 @@
           "description": "Enables in-line blame annotations",
           "scope": "resource"
         },
+        "jjk.enableAnnotationHover": {
+          "type": "boolean",
+          "default": true,
+          "description": "Shows commit details and actions when hovering over an in-line blame annotation",
+          "scope": "resource"
+        },
         "jjk.commandTimeout": {
           "type": [
             "number",

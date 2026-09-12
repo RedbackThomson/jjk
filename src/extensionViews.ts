@@ -256,6 +256,8 @@ export async function initializeExtensionViews(
     dispatchExtensionEffect: deps.dispatchExtensionEffect,
     findRepoByUri: deps.findRepoByUri,
     runRepoEffect: deps.runRepoEffect,
+    runRepoCommand: deps.runRepoCommand,
+    retryImmutable: deps.retryImmutable,
   });
 
   return {

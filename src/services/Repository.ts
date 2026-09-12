@@ -319,15 +319,25 @@ export const annotate = (
 ): Effect.Effect<string[], JJCliError | JJImmutableError, RepositoryEnv> =>
   Effect.gen(function* () {
     const cli = yield* JJCli;
-    const output = yield* cli.run(["file", "annotate", "-r", rev, filepath], {
-      timeout: 60_000,
-      ignoreWorkingCopy: true,
-    });
+    const output = yield* cli.run(
+      [
+        "file",
+        "annotate",
+        "-r",
+        rev,
+        "-T",
+        'commit.change_id() ++ "\\n"',
+        filepath,
+      ],
+      {
+        timeout: 60_000,
+        ignoreWorkingCopy: true,
+      },
+    );
     if (output === "") {
       return [];
     }
-    const lines = output.trim().split("\n");
-    return lines.map((line) => line.split(" ")[0]);
+    return output.trimEnd().split("\n");
   });
 
 export const log = (

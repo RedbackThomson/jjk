@@ -4,10 +4,11 @@ import type { JJCli } from "./services/JJCli";
 import type { ExtensionResources } from "./services/ExtensionResources";
 import type { Vscode } from "./services/Vscode";
 import { getActiveTextEditor, getConfigurationValue } from "./services/Vscode";
-import { annotate, getShow } from "./services/Repository";
+import { annotate, getShow, jjEdit } from "./services/Repository";
 import type { RepoHandle } from "./repoHandle";
 import { getParams } from "./uri";
 import type { ChangeWithDetails } from "./types";
+import type { RepoCommandEffect } from "./commandHandlerShared";
 
 import type { JjWatchmanRegisterSnapshotTriggerRef } from "./services/JjWatchmanSnapshotTriggerRef";
 
@@ -28,6 +29,48 @@ interface AnnotationInfo {
   readonly changeIdsByLine: readonly string[];
 }
 
+const COPY_CHANGE_ID_COMMAND = "jj.copyChangeId";
+const EDIT_ANNOTATED_CHANGE_COMMAND = "jj.editAnnotatedChange";
+
+export function buildAnnotationHover(
+  change: ChangeWithDetails,
+  repositoryRoot: string,
+): vscode.MarkdownString {
+  const hover = new vscode.MarkdownString();
+  hover.isTrusted = {
+    enabledCommands: [COPY_CHANGE_ID_COMMAND, EDIT_ANNOTATED_CHANGE_COMMAND],
+  };
+
+  hover.appendMarkdown("**Commit**\n\n");
+  hover.appendText(change.description || "(no description)");
+  hover.appendMarkdown("\n\n");
+
+  hover.appendMarkdown("**Author:** ");
+  hover.appendText(
+    change.author.email
+      ? `${change.author.name} <${change.author.email}>`
+      : change.author.name,
+  );
+  hover.appendMarkdown("  \n**Authored:** ");
+  hover.appendText(change.authoredDate);
+  hover.appendMarkdown("\n\n**Change ID:** `");
+  hover.appendText(change.changeId);
+  hover.appendMarkdown("`  \n**Commit ID:** `");
+  hover.appendText(change.commitId);
+  hover.appendMarkdown("`\n\n");
+
+  const copyCommandArgs = encodeURIComponent(JSON.stringify([change.changeId]));
+  const editCommandArgs = encodeURIComponent(
+    JSON.stringify([repositoryRoot, change.changeId]),
+  );
+  hover.appendMarkdown(
+    `[$(copy) Copy Change ID](command:${COPY_CHANGE_ID_COMMAND}?${copyCommandArgs}) · ` +
+      `[$(edit) Edit This Change](command:${EDIT_ANNOTATED_CHANGE_COMMAND}?${editCommandArgs})`,
+  );
+  hover.supportThemeIcons = true;
+  return hover;
+}
+
 export interface AnnotationDeps {
   readonly registerScoped: <A extends { dispose(): unknown }>(
     acquire: () => A,
@@ -44,9 +87,64 @@ export interface AnnotationDeps {
     repo: RepoHandle,
     effect: Effect.Effect<A, E, RepoEffectEnv>,
   ) => Effect.Effect<A, Error>;
+  readonly runRepoCommand: (
+    repo: RepoHandle,
+    effect: RepoCommandEffect,
+    errorLabel: string,
+  ) => Promise<void>;
+  readonly retryImmutable: <A>(
+    effect: RepoCommandEffect<A>,
+    confirmPrompt: string,
+    retryEffect: RepoCommandEffect<A>,
+  ) => RepoCommandEffect<A | undefined>;
 }
 
 export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
+  await deps.registerScoped(() =>
+    vscode.commands.registerCommand(
+      COPY_CHANGE_ID_COMMAND,
+      async (changeId: unknown) => {
+        if (typeof changeId !== "string" || changeId.length === 0) {
+          return;
+        }
+        await vscode.env.clipboard.writeText(changeId);
+        vscode.window.setStatusBarMessage(
+          `Copied Jujutsu change ID ${changeId}`,
+          2_000,
+        );
+      },
+    ),
+  );
+  await deps.registerScoped(() =>
+    vscode.commands.registerCommand(
+      EDIT_ANNOTATED_CHANGE_COMMAND,
+      async (repositoryRoot: unknown, changeId: unknown) => {
+        if (
+          typeof repositoryRoot !== "string" ||
+          typeof changeId !== "string" ||
+          changeId.length === 0
+        ) {
+          return;
+        }
+        const repo = deps.findRepoByUri(vscode.Uri.file(repositoryRoot));
+        if (!repo) {
+          void vscode.window.showErrorMessage(
+            "Could not find the Jujutsu repository for this annotation.",
+          );
+          return;
+        }
+        await deps.runRepoCommand(
+          repo,
+          deps.retryImmutable(
+            jjEdit(repo.config, changeId),
+            "The change is immutable. Edit anyway?",
+            jjEdit(repo.config, changeId, true),
+          ),
+          "Failed to edit annotated change",
+        );
+      },
+    ),
+  );
   const annotationDecoration = await deps.registerScoped(() =>
     vscode.window.createTextEditorDecorationType({
       after: {
@@ -170,30 +268,25 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
       const safeLines = lines.filter(
         (line) => line !== annotateInfo.changeIdsByLine.length,
       );
+      const uniqueChangeIds = [
+        ...new Set(
+          safeLines
+            .map((line) => annotateInfo.changeIdsByLine[line])
+            .filter((changeId): changeId is string => Boolean(changeId)),
+        ),
+      ];
       const changes = new Map(
         yield* Effect.forEach(
-          safeLines,
-          (line) => {
-            const changeId = annotateInfo.changeIdsByLine[line];
-            if (!changeId) {
-              return Effect.succeed(undefined);
-            }
-            return deps
+          uniqueChangeIds,
+          (changeId) =>
+            deps
               .runRepoEffect(repo, getShow(repo.config, changeId))
               .pipe(
                 Effect.map(
                   (showResult) => [changeId, showResult.change] as const,
                 ),
-              );
-          },
+              ),
           { concurrency: "unbounded" },
-        ).pipe(
-          Effect.map((entries) =>
-            entries.filter(
-              (entry): entry is readonly [string, ChangeWithDetails] =>
-                entry !== undefined,
-            ),
-          ),
         ),
       );
 
@@ -220,6 +313,10 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
         }
 
         decorations.push({
+          hoverMessage: buildAnnotationHover(
+            change,
+            repo.config.repositoryRoot,
+          ),
           renderOptions: {
             after: {
               backgroundColor: "#00000000",

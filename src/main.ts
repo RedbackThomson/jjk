@@ -32,6 +32,7 @@ import {
 } from "./commandHandlers";
 import { setupColocatedWarnings } from "./colocatedWarnings";
 import { buildWorkspaceSCMCompatLayer } from "./workspaceScmCompat";
+import { buildAnnotationHover } from "./annotations";
 import {
   createExtensionEffectRunner,
   retryImmutable,
@@ -303,6 +304,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   return {
     workspaceSCM,
+    annotations: { buildAnnotationHover },
     uri: await import("./uri"),
     graphWebview: await import("./graphWebview"),
     repository: {

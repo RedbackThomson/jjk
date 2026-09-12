@@ -3,9 +3,11 @@ import * as vscode from "vscode";
 import type { WorkspaceSourceControlManager } from "../repoHandle";
 import type * as UriModule from "../uri";
 import type * as GraphWebviewModule from "../graphWebview";
+import type { buildAnnotationHover } from "../annotations";
 
 type ExtensionAPI = {
   workspaceSCM: WorkspaceSourceControlManager;
+  annotations: { buildAnnotationHover: typeof buildAnnotationHover };
   uri: typeof UriModule;
   repository: {
     parseRenamePaths: (

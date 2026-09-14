@@ -339,7 +339,7 @@ export const createNavigationInitHandlers = (
       "Failed to open child change",
     );
   },
-  viewChange: (repositoryRoot, changeId) => {
+  viewChange: (repositoryRoot, rev) => {
     const repo = deps.repoLocator.findRepoByUri(
       vscode.Uri.file(repositoryRoot),
     );
@@ -350,17 +350,15 @@ export const createNavigationInitHandlers = (
     return deps.runRepoCommand(
       repo,
       Effect.gen(function* () {
-        const showResult = yield* getShow(repo.config, changeId);
+        const showResult = yield* getShow(repo.config, rev);
         const resources = showResult.fileStatuses.map((fileStatus) => {
           const fileUri = vscode.Uri.file(fileStatus.path);
           return [
             fileUri,
             fileStatus.type === "A"
               ? undefined
-              : toJJUri(fileUri, { diffOriginalRev: changeId }),
-            fileStatus.type === "D"
-              ? undefined
-              : toJJUri(fileUri, { rev: changeId }),
+              : toJJUri(fileUri, { diffOriginalRev: rev }),
+            fileStatus.type === "D" ? undefined : toJJUri(fileUri, { rev }),
           ];
         });
         yield* executeCommand(
@@ -372,7 +370,7 @@ export const createNavigationInitHandlers = (
       "Failed to view change",
     );
   },
-  openChangeFileDiff: (changeId, fsPath, line) => {
+  openChangeFileDiff: (rev, fsPath, line, label) => {
     const fileUri = vscode.Uri.file(fsPath);
     const options: vscode.TextDocumentShowOptions | undefined =
       line !== undefined
@@ -381,9 +379,9 @@ export const createNavigationInitHandlers = (
     return deps.runExtensionEffect(
       executeCommand(
         "vscode.diff",
-        toJJUri(fileUri, { diffOriginalRev: changeId }),
-        toJJUri(fileUri, { rev: changeId }),
-        `${path.basename(fsPath)} (${changeId.substring(0, 8)})`,
+        toJJUri(fileUri, { diffOriginalRev: rev }),
+        toJJUri(fileUri, { rev }),
+        `${path.basename(fsPath)} (${label ?? rev.substring(0, 8)})`,
         options,
       ),
       "Failed to open changes",

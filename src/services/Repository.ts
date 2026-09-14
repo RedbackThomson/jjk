@@ -312,6 +312,8 @@ export const readFile = (
     );
   });
 
+// Emits commit IDs rather than change IDs: a divergent change ID resolves to
+// more than one revision, so callers could not use it as a revset.
 export const annotate = (
   _config: RepositoryConfig,
   filepath: string,
@@ -326,7 +328,7 @@ export const annotate = (
         "-r",
         rev,
         "-T",
-        'commit.change_id() ++ "\\n"',
+        'commit.commit_id() ++ "\\n"',
         filepath,
       ],
       {

@@ -32,7 +32,7 @@ interface AnnotationState {
 
 interface AnnotationInfo {
   readonly uri: vscode.Uri;
-  readonly changeIdsByLine: readonly string[];
+  readonly commitIdsByLine: readonly string[];
 }
 
 const COPY_CHANGE_ID_COMMAND = "jj.copyChangeId";
@@ -146,11 +146,12 @@ export function buildAnnotationHover(
   const copyCommitCommandArgs = encodeURIComponent(
     JSON.stringify([change.shortCommitId]),
   );
+  // Commands take the commit ID: a divergent change ID is ambiguous as a revset.
   const editCommandArgs = encodeURIComponent(
-    JSON.stringify([repositoryRoot, change.changeId]),
+    JSON.stringify([repositoryRoot, change.commitId]),
   );
   const viewChangeCommandArgs = encodeURIComponent(
-    JSON.stringify([repositoryRoot, change.changeId]),
+    JSON.stringify([repositoryRoot, change.commitId]),
   );
   const formattedChangeId = formatSegmentedId(
     change.shortChangeId,
@@ -168,7 +169,12 @@ export function buildAnnotationHover(
   );
   if (context) {
     const openChangesCommandArgs = encodeURIComponent(
-      JSON.stringify([change.changeId, context.filePath, context.line]),
+      JSON.stringify([
+        change.commitId,
+        context.filePath,
+        context.line,
+        change.shortChangeId,
+      ]),
     );
     hover.appendMarkdown(
       ` &nbsp; [$(compare-changes)](command:${OPEN_CHANGE_FILE_DIFF_COMMAND}?${openChangesCommandArgs} "Open changes for this file")`,
@@ -239,11 +245,11 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
   await deps.registerScoped(() =>
     vscode.commands.registerCommand(
       EDIT_ANNOTATED_CHANGE_COMMAND,
-      async (repositoryRoot: unknown, changeId: unknown) => {
+      async (repositoryRoot: unknown, rev: unknown) => {
         if (
           typeof repositoryRoot !== "string" ||
-          typeof changeId !== "string" ||
-          changeId.length === 0
+          typeof rev !== "string" ||
+          rev.length === 0
         ) {
           return;
         }
@@ -257,9 +263,9 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
         await deps.runRepoCommand(
           repo,
           deps.retryImmutable(
-            jjEdit(repo.config, changeId),
+            jjEdit(repo.config, rev),
             "The change is immutable. Edit anyway?",
-            jjEdit(repo.config, changeId, true),
+            jjEdit(repo.config, rev, true),
           ),
           "Failed to edit annotated change",
         );
@@ -360,7 +366,7 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
               ),
             )
           : annotate(repo.config, uri.fsPath, rev);
-      const changeIdsByLine = yield* deps
+      const commitIdsByLine = yield* deps
         .runRepoEffect(repo, annotateEffect)
         .pipe(
           Effect.catchIf(
@@ -372,8 +378,8 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
       yield* Ref.update(annotationState, (state) => ({
         ...state,
         annotateInfo:
-          uriEquals(state.activeEditorUri, uri) && changeIdsByLine.length > 0
-            ? { uri, changeIdsByLine }
+          uriEquals(state.activeEditorUri, uri) && commitIdsByLine.length > 0
+            ? { uri, commitIdsByLine }
             : undefined,
       }));
     });
@@ -407,23 +413,23 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
 
       const annotateInfo = state.annotateInfo;
       const safeLines = lines.filter(
-        (line) => line !== annotateInfo.changeIdsByLine.length,
+        (line) => line !== annotateInfo.commitIdsByLine.length,
       );
-      const uniqueChangeIds = [
+      const uniqueCommitIds = [
         ...new Set(
           safeLines
-            .map((line) => annotateInfo.changeIdsByLine[line])
-            .filter((changeId): changeId is string => Boolean(changeId)),
+            .map((line) => annotateInfo.commitIdsByLine[line])
+            .filter((commitId): commitId is string => Boolean(commitId)),
         ),
       ];
       const changes = new Map(
         yield* Effect.forEach(
-          uniqueChangeIds,
-          (changeId) =>
+          uniqueCommitIds,
+          (commitId) =>
             deps
-              .runRepoEffect(repo, getShow(repo.config, changeId))
+              .runRepoEffect(repo, getShow(repo.config, commitId))
               .pipe(
-                Effect.map((showResult) => [changeId, showResult] as const),
+                Effect.map((showResult) => [commitId, showResult] as const),
               ),
           { concurrency: "unbounded" },
         ),
@@ -441,12 +447,12 @@ export async function setupAnnotations(deps: AnnotationDeps): Promise<void> {
 
       const decorations: vscode.DecorationOptions[] = [];
       for (const line of safeLines) {
-        const changeId = nextState.annotateInfo.changeIdsByLine[line];
-        if (!changeId) {
+        const commitId = nextState.annotateInfo.commitIdsByLine[line];
+        if (!commitId) {
           continue;
         }
 
-        const show = changes.get(changeId);
+        const show = changes.get(commitId);
         if (!show) {
           continue;
         }

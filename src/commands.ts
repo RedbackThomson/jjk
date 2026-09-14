@@ -46,11 +46,12 @@ export interface InitCommandHandlers {
   readonly squashSelectedRanges: () => unknown;
   readonly openParentChange: (uri: vscode.Uri) => unknown;
   readonly openChildChange: (uri: vscode.Uri) => unknown;
-  readonly viewChange: (repositoryRoot: string, changeId: string) => unknown;
+  readonly viewChange: (repositoryRoot: string, rev: string) => unknown;
   readonly openChangeFileDiff: (
-    changeId: string,
+    rev: string,
     fsPath: string,
     line?: number,
+    label?: string,
   ) => unknown;
 }
 

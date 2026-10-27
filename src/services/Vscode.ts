@@ -15,6 +15,11 @@ export interface VscodeService {
     key: string,
     folderPath: string,
   ) => Effect.Effect<A | undefined>;
+  readonly updateGlobalConfigurationValue: (
+    section: string,
+    key: string,
+    value: unknown,
+  ) => Effect.Effect<void, Error>;
   readonly executeCommand: <T = unknown>(
     command: string,
     ...args: unknown[]
@@ -88,6 +93,18 @@ export function VscodeLive(
           .getConfiguration(section, vscode.Uri.file(folderPath))
           .get<A>(key),
       ),
+    updateGlobalConfigurationValue: (
+      section: string,
+      key: string,
+      value: unknown,
+    ) =>
+      Effect.tryPromise({
+        try: () =>
+          vscode.workspace
+            .getConfiguration(section)
+            .update(key, value, vscode.ConfigurationTarget.Global),
+        catch: toError,
+      }),
     executeCommand: <T = unknown>(command: string, ...args: unknown[]) =>
       Effect.tryPromise({
         try: () => vscode.commands.executeCommand<T>(command, ...args),
@@ -158,6 +175,15 @@ export const getFolderConfigurationValue = <A>(
 ): Effect.Effect<A | undefined, never, Vscode> =>
   Effect.flatMap(Vscode, (service) =>
     service.getFolderConfigurationValue<A>(section, key, folderPath),
+  );
+
+export const updateGlobalConfigurationValue = (
+  section: string,
+  key: string,
+  value: unknown,
+): Effect.Effect<void, Error, Vscode> =>
+  Effect.flatMap(Vscode, (service) =>
+    service.updateGlobalConfigurationValue(section, key, value),
   );
 
 export const executeCommand = <T = unknown>(

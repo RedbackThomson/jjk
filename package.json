@@ -538,6 +538,12 @@
           "default": null,
           "description": "Path to the fake editor executable. If not set, use bundled prebuilt binaries for the current platform."
         },
+        "jjk.showColocatedWarningNotification": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification when a colocated Jujutsu and Git repository is opened with the Git extension enabled. The JJK Issues status bar item is unaffected and can be hidden from the status bar context menu.",
+          "scope": "application"
+        },
         "jjk.pollSnapshotWorkingCopy": {
           "type": "boolean",
           "default": true,

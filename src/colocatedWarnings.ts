@@ -6,6 +6,7 @@ import {
   getConfigurationValue,
   showWarningMessage,
   stat,
+  updateGlobalConfigurationValue,
   type Vscode,
 } from "./services/Vscode";
 import { registerColocatedWarningCommand } from "./commands";
@@ -33,8 +34,13 @@ export async function setupColocatedWarnings(
   deps: ColocatedWarningsDeps,
 ): Promise<ColocatedWarningsController> {
   const statusBarItem = await deps.registerScoped(() =>
-    vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100),
+    vscode.window.createStatusBarItem(
+      "jjk.colocatedWarnings",
+      vscode.StatusBarAlignment.Left,
+      100,
+    ),
   );
+  statusBarItem.name = "JJK Issues";
   const reposWithWarnings = new Set<string>();
   const reposWithShownWarnings = new Set<string>();
 
@@ -53,9 +59,20 @@ export async function setupColocatedWarnings(
       const folderName = repoRoot.split("/").at(-1) || repoRoot;
       const message = `Colocated Jujutsu and Git repository detected in "${folderName}". Consider disabling the Git extension to avoid conflicts.`;
       const openSettings = "Open Folder Settings";
-      const selection = yield* showWarningMessage(message, openSettings);
+      const dontShowAgain = "Don't Show Again";
+      const selection = yield* showWarningMessage(
+        message,
+        openSettings,
+        dontShowAgain,
+      );
       if (selection === openSettings) {
         yield* executeCommand("jj.openFolderGitSettings", repoRoot);
+      } else if (selection === dontShowAgain) {
+        yield* updateGlobalConfigurationValue(
+          "jjk",
+          "showColocatedWarningNotification",
+          false,
+        );
       }
     });
 
@@ -130,7 +147,11 @@ export async function setupColocatedWarnings(
         }
 
         yield* updateWarningStatusBar();
-        if (reposNeedingWarning.length > 0) {
+        const showNotification = yield* getConfigurationValue<boolean>(
+          "jjk",
+          "showColocatedWarningNotification",
+        );
+        if (showNotification !== false && reposNeedingWarning.length > 0) {
           yield* Effect.sync(() => {
             deps.dispatchExtensionEffect(
               Effect.forEach(reposNeedingWarning, showColocatedWarningEffect, {

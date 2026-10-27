@@ -214,8 +214,13 @@ export async function initializeExtensionViews(
   );
 
   const statusBarItem = await deps.registerScoped(() =>
-    vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100),
+    vscode.window.createStatusBarItem(
+      "jjk.gitFetch",
+      vscode.StatusBarAlignment.Left,
+      100,
+    ),
   );
+  statusBarItem.name = "Jujutsu Git Fetch";
   statusBarItem.command = "jj.gitFetch";
 
   const statusBarHandleDidChangeActiveTextEditor = (

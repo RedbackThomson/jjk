@@ -31,6 +31,8 @@ import type { ExtensionResources } from "./services/ExtensionResources";
 import { closeScope, scopedDisposable } from "./effectUtils";
 import type { JJGraphWebview } from "./graphWebview";
 import type { OperationLogManager } from "./operationLogTreeView";
+import { getWorkspaces } from "./services/Repository";
+import { attachWorkspaceTitle } from "./workspaceTitle";
 
 const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error(String(cause));
@@ -166,6 +168,22 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
         sourceControl.quickDiffProvider = {
           provideOriginalResource,
         };
+
+        const workspaces = yield* getWorkspaces(config).pipe(
+          Effect.provide(repoLayer),
+          Effect.catchAll((error) => {
+            logger.warn(
+              `Failed to list workspaces for ${info.repoRoot}: ${String(error)}`,
+            );
+            return Effect.succeed([]);
+          }),
+        );
+        yield* Scope.extend(
+          scopedDisposable(() =>
+            attachWorkspaceTitle(sourceControl, info.repoRoot, workspaces),
+          ),
+          repoScope,
+        );
 
         const repoPath = resolveRepoPath(info.repoRoot);
         const watcherOperations = yield* Scope.extend(

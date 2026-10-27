@@ -5,6 +5,9 @@
   "description": "Jujutsu (jj) version control system for VS Code",
   "icon": "images/logo.png",
   "version": "0.99.0",
+  "enabledApiProposals": [
+    "scmHistoryProvider"
+  ],
   "engines": {
     "vscode": "^1.96.0",
     "npm": ">=11.10.0"
